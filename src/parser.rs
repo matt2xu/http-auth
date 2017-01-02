@@ -3,7 +3,7 @@
 use nom::{IResult};
 use nom::IResult::{Done, Error};
 
-use super::{Challenge, ChallengeInfo, Authentication};
+use super::{Scheme, Params, Authentication};
 use authentication::{new_authentication, new_challenge};
 
 use std::str;
@@ -24,23 +24,34 @@ fn is_equal(ch: u8) -> bool {
     ch == b'='
 }
 
-named!(parse_scheme,
+named!(parse_name,
     preceded!(take_while!(is_ident), take_while!(is_equal))
 );
 
-named!(parse_challenge<Challenge>,
+// TODO parse params
+named!(parse_params<Params>,
     do_parse!(
         advance >>
-        scheme: map_res!(parse_scheme, str::from_utf8) >>
         ({
-            new_challenge(scheme, Some(ChallengeInfo::Base64("toto".into())))
+            Params::Base64("toto".into())
+        })
+    )
+);
+
+named!(parse_scheme<Scheme>,
+    do_parse!(
+        advance >>
+        scheme: map_res!(parse_name, str::from_utf8) >>
+        params: opt!(parse_params) >>
+        ({
+            new_challenge(scheme, params)
         })
     )
 );
 
 named!(pub parse_authentication<Authentication>,
     do_parse!(
-        challenges: many0!(parse_challenge) >>
+        challenges: many0!(parse_scheme) >>
         ({
             new_authentication(vec![])
         })

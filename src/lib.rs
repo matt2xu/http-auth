@@ -8,7 +8,7 @@ extern crate nom;
 mod parser;
 mod authentication;
 
-pub use authentication::{Challenge, ChallengeInfo, Authentication};
+pub use authentication::{Scheme, Params, Authentication, Authorization};
 
 pub use parser::parse_authentication;
 

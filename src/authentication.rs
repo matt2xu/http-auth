@@ -3,44 +3,44 @@
 use std::borrow::Cow;
 
 #[derive(Debug)]
-pub struct Challenge<'a> {
-    scheme: Cow<'a, str>,
-    info: Option<ChallengeInfo<'a>>
+pub struct Scheme<'a> {
+    name: Cow<'a, str>,
+    params: Option<Params<'a>>
 }
 
 #[derive(Debug)]
-pub enum ChallengeInfo<'a> {
+pub enum Params<'a> {
     Base64(Cow<'a, str>),
-    Params(Vec<(Cow<'a, str>, Cow<'a, str>)>)
+    Map(Vec<(Cow<'a, str>, Cow<'a, str>)>)
 }
 
-impl<'a> Challenge<'a> {
-    pub fn scheme(&'a self) -> &'a str {
-        &self.scheme
+impl<'a> Scheme<'a> {
+    pub fn name(&'a self) -> &'a str {
+        &self.name
     }
 
-    pub fn info(&self) -> Option<&ChallengeInfo<'a>> {
-        self.info.as_ref()
+    pub fn params(&self) -> Option<&Params<'a>> {
+        self.params.as_ref()
     }
 }
 
 pub struct Authentication<'a> {
-    challenges: Vec<Challenge<'a>>
+    challenges: Vec<Scheme<'a>>
 }
 
-pub fn new_challenge<'a>(scheme: &'a str, info: Option<ChallengeInfo<'a>>) -> Challenge<'a> {
-    Challenge {
-        scheme: scheme.into(),
-        info: info
+pub fn new_challenge<'a>(name: &'a str, params: Option<Params<'a>>) -> Scheme<'a> {
+    Scheme {
+        name: name.into(),
+        params: params
     }
 }
 
-pub fn new_authentication(challenges: Vec<Challenge>) -> Authentication {
+pub fn new_authentication(challenges: Vec<Scheme>) -> Authentication {
     Authentication {
         challenges: challenges
     }
 }
 
 pub struct Authorization<'a> {
-    credential: Challenge<'a>
+    credential: Scheme<'a>
 }
