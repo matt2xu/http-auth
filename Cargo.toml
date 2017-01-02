@@ -1,0 +1,7 @@
+[package]
+name = "http-auth"
+version = "0.1.0"
+authors = ["Matthieu Wipliez <matthieu.wipliez@gmail.com>"]
+
+[dependencies]
+nom = "2.0"
