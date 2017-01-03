@@ -1,6 +1,6 @@
 //! Parser for challenge/credentials.
 
-use nom::{IResult};
+use nom::{IResult, is_alphanumeric};
 use nom::IResult::{Done, Error};
 
 use super::{Scheme, Params, Authentication};
@@ -16,24 +16,91 @@ named!(advance,
     take_while!(can_skip)
 );
 
-fn is_ident(ch: u8) -> bool {
-    match ch { b' ' | b'\t' | b'"' | b',' => true, _ => false }
+fn is_token(ch: u8) -> bool {
+    match ch {
+        b' ' | b'\t' | b'"' | b',' | b'=' => false,
+        _ => true
+    }
 }
 
 fn is_equal(ch: u8) -> bool {
     ch == b'='
 }
 
-named!(parse_name,
-    preceded!(take_while!(is_ident), take_while!(is_equal))
+fn is_space(ch: u8) -> bool {
+    ch == b' '
+}
+
+fn is_whitespace(ch: u8) -> bool {
+    ch == b' ' || ch == b'\t'
+}
+
+fn is_token68(ch: u8) -> bool {
+    match ch {
+        b'-' | b'.' | b'_' | b'~' | b'+' | b'/' => true,
+        _ => is_alphanumeric(ch)
+    }
+}
+
+named!(parse_token,
+    take_while1!(is_token)
 );
 
-// TODO parse params
-named!(parse_params<Params>,
+// TODO return Cow in case string contains escaped chars
+named!(quoted_string,
+    take_while1!(is_token)
+);
+
+named!(parse_param<()>,
     do_parse!(
-        advance >>
+        key: take_while1!(is_token) >>
+        take_while!(is_whitespace) >> // bad whitespace
+        char!('=') >>
+        take_while!(is_whitespace) >> // bad whitespace
+        value: alt!(take_while1!(is_token) | quoted_string) >>
         ({
-            Params::Base64("toto".into())
+
+        })
+    )
+);
+
+named!(parse_map<Option<Params>>,
+    do_parse!(
+        param: alt!(
+            map!(char!(b','), |_| None) |
+            map!(parse_param, |param| Some(param))
+        ) >>
+        advance >>
+        rest: many0!(parse_param) >>
+        ({
+            param.map_or(None, |()| Some(Params::Map(vec![])))
+        })
+    )
+);
+
+named!(parse_map_opt<Option<Params>>,
+    do_parse!(params: opt!(parse_map) >> (params.unwrap_or(None)))
+);
+
+named!(parse_token68<Option<Params>>,
+    do_parse!(
+        name: map_res!(preceded!(take_while!(is_token68), take_while!(is_equal)), str::from_utf8) >>
+        ({
+            Some(Params::Base64(name.into()))
+        })
+    )
+);
+
+named!(parse_params<Option<Params>>,
+    do_parse!(
+        take_while1!(is_space) >>
+        // token68 can be a prefix of auth-param:
+        // token68: abcd=
+        // auth-param: abcd=efgh
+        // so we test the longest, map_opt, first:
+        params: alt!(parse_map_opt | parse_token68) >>
+        ({
+            params
         })
     )
 );
@@ -41,21 +108,16 @@ named!(parse_params<Params>,
 named!(parse_scheme<Scheme>,
     do_parse!(
         advance >>
-        scheme: map_res!(parse_name, str::from_utf8) >>
+        scheme: map_res!(parse_token, str::from_utf8) >>
         params: opt!(parse_params) >>
         ({
-            new_challenge(scheme, params)
+            new_challenge(scheme, params.unwrap_or(None))
         })
     )
 );
 
 named!(pub parse_authentication<Authentication>,
-    do_parse!(
-        challenges: many0!(parse_scheme) >>
-        ({
-            new_authentication(vec![])
-        })
-    )
+    map!(many0!(parse_scheme), |challenges| new_authentication(challenges))
 );
 
 #[cfg(test)]
