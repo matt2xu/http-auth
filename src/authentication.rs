@@ -2,13 +2,13 @@
 
 use std::borrow::Cow;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Scheme<'a> {
     name: Cow<'a, str>,
     params: Option<Params<'a>>
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Params<'a> {
     Base64(Cow<'a, str>),
     Map(Vec<(Cow<'a, str>, Cow<'a, str>)>)
@@ -24,13 +24,14 @@ impl<'a> Scheme<'a> {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct Authentication<'a> {
-    challenges: Vec<Scheme<'a>>
+    pub challenges: Vec<Scheme<'a>>
 }
 
-pub fn new_challenge<'a>(name: &'a str, params: Option<Params<'a>>) -> Scheme<'a> {
+pub fn new_scheme<'a>(name: Cow<'a, str>, params: Option<Params<'a>>) -> Scheme<'a> {
     Scheme {
-        name: name.into(),
+        name: name,
         params: params
     }
 }
@@ -42,5 +43,5 @@ pub fn new_authentication(challenges: Vec<Scheme>) -> Authentication {
 }
 
 pub struct Authorization<'a> {
-    credential: Scheme<'a>
+    pub credentials: Scheme<'a>
 }

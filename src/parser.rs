@@ -1,11 +1,11 @@
 //! Parser for challenge/credentials.
 
 use nom::{IResult, is_alphanumeric};
-use nom::IResult::{Done, Error};
 
 use super::{Scheme, Params, Authentication};
-use authentication::{new_authentication, new_challenge};
+use authentication::{new_authentication, new_scheme};
 
+use std::borrow::Cow;
 use std::str;
 
 fn can_skip(c: u8) -> bool {
@@ -42,51 +42,60 @@ fn is_token68(ch: u8) -> bool {
     }
 }
 
-named!(parse_token,
-    take_while1!(is_token)
+named!(token<&str>,
+    map_res!(take_while1!(is_token), str::from_utf8)
 );
 
-// TODO return Cow in case string contains escaped chars
-named!(quoted_string,
-    take_while1!(is_token)
-);
+fn parse_token<'a>(input: &'a [u8]) -> IResult<&'a [u8], Cow<'a, str>> {
+    token(input).map(|s| s.into())
+}
 
-named!(parse_param<()>,
-    do_parse!(
-        key: take_while1!(is_token) >>
+fn quoted_string<'a>(input: &'a [u8]) -> IResult<&'a [u8], Cow<'a, str>> {
+    // TODO: parse quoted string
+    // will be owned if escape chars encountered
+    token(input).map(|s| s.into())
+}
+
+fn parse_param<'a>(input: &'a [u8]) -> IResult<&'a [u8], (Cow<'a, str>, Cow<'a, str>)> {
+    do_parse!(input,
+        advance >>
+        key: parse_token >>
         take_while!(is_whitespace) >> // bad whitespace
         char!('=') >>
         take_while!(is_whitespace) >> // bad whitespace
-        value: alt!(take_while1!(is_token) | quoted_string) >>
+        value: alt!(parse_token | quoted_string) >>
         ({
-
+            (key, value)
         })
     )
-);
+}
 
 named!(parse_map<Option<Params>>,
     do_parse!(
-        param: alt!(
-            map!(char!(b','), |_| None) |
-            map!(parse_param, |param| Some(param))
-        ) >>
-        advance >>
-        rest: many0!(parse_param) >>
+        params: many1!(parse_param) >>
         ({
-            param.map_or(None, |()| Some(Params::Map(vec![])))
+            println!("got params!");
+            Some(Params::Map(params))
         })
     )
 );
 
-named!(parse_map_opt<Option<Params>>,
-    do_parse!(params: opt!(parse_map) >> (params.unwrap_or(None)))
-);
+fn token68(input: &[u8]) -> IResult<&[u8], &[u8]> {
+    do_parse!(input,
+        first: take_while1!(is_token68) >>
+        second: take_while!(is_equal) >>
+        ({
+            // concatenate
+            &input[0 .. first.len() + second.len()]
+        })
+    )
+}
 
 named!(parse_token68<Option<Params>>,
     do_parse!(
-        name: map_res!(preceded!(take_while!(is_token68), take_while!(is_equal)), str::from_utf8) >>
+        name: opt!(map_res!(token68, str::from_utf8)) >>
         ({
-            Some(Params::Base64(name.into()))
+            name.map(|name| Params::Base64(name.into()))
         })
     )
 );
@@ -98,8 +107,9 @@ named!(parse_params<Option<Params>>,
         // token68: abcd=
         // auth-param: abcd=efgh
         // so we test the longest, map_opt, first:
-        params: alt!(parse_map_opt | parse_token68) >>
+        params: alt_complete!(parse_map | parse_token68) >>
         ({
+            println!("got params: {:?}", params);
             params
         })
     )
@@ -108,10 +118,10 @@ named!(parse_params<Option<Params>>,
 named!(parse_scheme<Scheme>,
     do_parse!(
         advance >>
-        scheme: map_res!(parse_token, str::from_utf8) >>
+        scheme: parse_token >>
         params: opt!(parse_params) >>
         ({
-            new_challenge(scheme, params.unwrap_or(None))
+            new_scheme(scheme, params.unwrap_or(None))
         })
     )
 );
@@ -123,14 +133,106 @@ named!(pub parse_authentication<Authentication>,
 #[cfg(test)]
 mod tests {
     use super::parse_authentication;
+    use authentication::{new_authentication, new_scheme, Params};
 
     #[test]
-    fn test_response() {
-        let result = parse_authentication(b"  ,,,  ,   Digest a=b   , ,,  ,c  =  d,Basic zzzzz==   ,   Digest x=y,z=w");
+    fn test_scheme_only() {
+        let auth_simple = new_authentication(vec![new_scheme("a-scheme".into(), None)]);
 
-        // test parsing
+        let result = parse_authentication(b"a-scheme");
         assert!(result.is_done());
-        let (body, res) = result.unwrap();
-        assert_eq!(body, &b"12345"[..]);
+        let (remaining, auth) = result.unwrap();
+        assert_eq!(remaining, &b""[..]);
+        assert_eq!(auth, auth_simple);
+
+        let result = parse_authentication(b", a-scheme  ");
+        assert!(result.is_done());
+        let (remaining, auth) = result.unwrap();
+        assert_eq!(remaining, &b""[..]);
+        assert_eq!(auth, auth_simple);
+
+        let two_schemes = new_authentication(vec![
+            new_scheme("scheme-a".into(), None),
+            new_scheme("scheme-b".into(), None)
+        ]);
+
+        let result = parse_authentication(b"scheme-a  ,  scheme-b");
+        println!("{:?}", result);
+        assert!(result.is_done());
+        let (remaining, auth) = result.unwrap();
+        assert_eq!(remaining, &b""[..]);
+        assert_eq!(auth, two_schemes);
+    }
+
+    #[test]
+    fn test_token68() {
+        let auth_basic = new_authentication(vec![
+            new_scheme("Basic".into(), Some(Params::Base64("abcdefgh".into())))
+        ]);
+
+        let result = parse_authentication(b"Basic abcdefgh");
+        let (remaining, auth) = result.unwrap();
+        assert_eq!(remaining, &b""[..]);
+        assert_eq!(auth, auth_basic);
+
+        let auth_basic1 = new_authentication(vec![
+            new_scheme("Basic".into(), Some(Params::Base64("abcdefgh=".into())))
+        ]);
+
+        let result = parse_authentication(b"Basic abcdefgh=");
+        let (remaining, auth) = result.unwrap();
+        assert_eq!(remaining, &b""[..]);
+        assert_eq!(auth, auth_basic1);
+
+        let auth_basic2 = new_authentication(vec![
+            new_scheme("Basic".into(), Some(Params::Base64("abcdefgh==".into())))
+        ]);
+
+        let result = parse_authentication(b"Basic abcdefgh==");
+        let (remaining, auth) = result.unwrap();
+        assert_eq!(remaining, &b""[..]);
+        assert_eq!(auth, auth_basic2);
+
+        let two_basic = new_authentication(vec![
+            new_scheme("Basic".into(), Some(Params::Base64("abcdefgh=".into()))),
+            new_scheme("Basic".into(), Some(Params::Base64("abcdefgh==".into())))
+        ]);
+
+        let result = parse_authentication(b"Basic abcdefgh= , Basic abcdefgh==");
+        let (remaining, auth) = result.unwrap();
+        assert_eq!(remaining, &b""[..]);
+        assert_eq!(auth, two_basic);
+    }
+
+    #[test]
+    fn test_params() {
+        let auth_digest = new_authentication(vec![
+            new_scheme("Digest".into(), Some(Params::Map(vec![
+                ("realm".into(), "example.com".into()),
+                ("username".into(), "sally".into())
+            ])))
+        ]);
+
+        let result = parse_authentication(b"Digest realm=example.com, username=sally");
+        let (remaining, auth) = result.unwrap();
+        assert_eq!(remaining, &b""[..]);
+        assert_eq!(auth, auth_digest);
+    }
+
+    #[test]
+    fn test_two() {
+        let auth_two = new_authentication(vec![
+            new_scheme("Digest".into(), Some(Params::Map(vec![
+                ("realm".into(), "example.com".into()),
+                ("username".into(), "sally".into())
+            ]))),
+
+            new_scheme("Basic".into(), Some(Params::Base64("abcdefgh==".into())))
+        ]);
+
+        let result = parse_authentication(b"Digest realm=example.com, username=sally,Basic abcdefgh==");
+        let (remaining, auth) = result.unwrap();
+        assert_eq!(remaining, &b""[..]);
+        assert_eq!(auth, auth_two);
     }
 }
