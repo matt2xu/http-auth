@@ -1,6 +1,6 @@
 //! Parser for challenge/credentials.
 
-use nom::{IResult, is_alphanumeric};
+use nom::{IResult, anychar, is_alphanumeric};
 
 use super::{Scheme, Params, Authentication};
 use authentication::{new_authentication, new_scheme};
@@ -50,10 +50,30 @@ fn parse_token<'a>(input: &'a [u8]) -> IResult<&'a [u8], Cow<'a, str>> {
     token(input).map(|s| s.into())
 }
 
+named!(raw_quoted_string<&str>,
+    delimited!(
+        char!('\"'),
+        map_res!(escaped!(is_not!(&b"\"\\"[..]), '\\', call!(anychar)), str::from_utf8),
+        char!('\"')
+    )
+);
+
 fn quoted_string<'a>(input: &'a [u8]) -> IResult<&'a [u8], Cow<'a, str>> {
-    // TODO: parse quoted string
-    // will be owned if escape chars encountered
-    token(input).map(|s| s.into())
+    raw_quoted_string(input).map(|qstr| {
+        if qstr.find(|ch| ch == '\\').is_some() {
+            let mut res = String::with_capacity(qstr.len());
+            let mut it = qstr.chars();
+            while let Some(mut ch) = it.next() {
+                if ch == '\\' {
+                    ch = it.next().unwrap(); // guaranteed by escaped macro
+                }
+                res.push(ch);
+            }
+            res.into()
+        } else {
+            qstr.into()
+        }
+    })
 }
 
 fn parse_param<'a>(input: &'a [u8]) -> IResult<&'a [u8], (Cow<'a, str>, Cow<'a, str>)> {
@@ -230,7 +250,7 @@ mod tests {
             new_scheme("Basic".into(), Some(Params::Base64("abcdefgh==".into())))
         ]);
 
-        let result = parse_authentication(b"Digest realm=example.com, username=sally,Basic abcdefgh==");
+        let result = parse_authentication(b"Digest realm=\"example.com\", username=sally,Basic abcdefgh==");
         let (remaining, auth) = result.unwrap();
         assert_eq!(remaining, &b""[..]);
         assert_eq!(auth, auth_two);
